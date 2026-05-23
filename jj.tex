@@ -1,0 +1,107 @@
+require('dotenv').config();
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
+const Groq = require("groq-sdk");
+
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const sessions = {};
+
+const client = new Client({
+    authStrategy: new LocalAuth(),
+    puppeteer: {
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    }
+});
+
+client.on('qr', (qr) => {
+    console.log('QR Code scan karein:');
+    qrcode.generate(qr, { small: true });
+});
+
+client.on('ready', () => {
+    console.log('🚀 Jivan AI Bot Active Hai!');
+});
+
+client.on('message_create', async (msg) => {
+    // 1. Apne khud ke messages ko ignore karein
+    if (msg.fromMe && !msg.body.startsWith('!test')) return;
+
+    // 2. Groups ko ignore karein
+    if (msg.from.endsWith('@g.us')) return;
+
+    // 3. Sirf personal chats
+    if (msg.from.includes('@c.us') || msg.from.includes('@lid')) {
+        const from = msg.from;
+        const msgText = msg.body;
+
+        if (!msgText || msgText.length < 1) return;
+
+        console.log(`\n📩 Received: ${msgText} from ${from}`);
+
+        try {
+            if (!sessions[from]) sessions[from] = [];
+            
+            // User ka message memory mein dalo
+            sessions[from].push({ role: "user", content: msgText });
+
+            const chat = await msg.getChat();
+            await chat.sendStateTyping();
+
+            // AI Instruction (Personality Upgrade)
+       const response = await groq.chat.completions.create({
+                messages: [
+                    {
+                        role: "system",
+                        content: `
+                        Identity: Tum Jivan ke 'Personal AI Proxy' ho. 
+                        Personality: Ek dum real insaan ki tarah behave karo jo WhatsApp handle kar raha hai.
+                        
+                        Instructions:
+                        1. Language: Natural Hindi +english (texting style). No robotic words. 
+                         chatgpt,gemini other ai jaise user se baa krte h smane wale ke reply ka  wise tum v kiya kro  always help 
+                        2. Memory: Samne wale ne pehle kya kaha hai, uska dhyan rakh kar reply do. 
+                        3. Reply Style: Ek dum chhote aur to-the-point replies (Jaise: 'nahi bhai kal off hai', 'haan pta hai', 'puch ke btata hu'). 
+                        4. Human Touch: Jarurat pade toh 'pata nahi', 'dekhna padega', ya 'shyd' jaise words use karo.
+                        5. Agar koi school ki baat kare jaise "school ja raha hai?", toh aise jawab do jaise tum Jivan ke schedule ko jante ho (e.g., "abhi toh nahi yaar, thoda kaam hai usey").
+                        6.  samane wala person kya bol rha h usko flow ko smjho ki o kya bol rha h and unki baat ke according tum usko reply kro 
+                        7. gaali ni dena ek acchse people ki trh baat kro samne walo ko smjho  wise bat kro
+                        8.  agr need ho to emoji bhi use kiya kro.
+                        9. agr koi ladki baat kr rhi h to unko unko uske accorrding baat kro  ladki baat kr rhi ho to unko bhai bolna  mt bolna  and usko respectful  baat krna .
+                        
+                        `
+                    },
+                    ...sessions[from].slice(-10) 
+                ],
+              
+                model: "llama-3.3-70b-versatile", 
+                temperature: 0.8, 
+            });
+            
+            const aiReply = response.choices[0]?.message?.content;
+
+            if (aiReply) {
+                // 🔥 Insaani Touch: 3 se 6 second ka random wait taaki instantly reply na jaye
+                const randomDelay = Math.floor(Math.random() * 3000) + 3000;
+
+                setTimeout(async () => {
+                    await client.sendMessage(from, aiReply);
+                    console.log(`💡 AI Reply: ${aiReply}`);
+                    
+                   //memory store chat  for last 5-6  chat
+                    sessions[from].push({ role: "assistant", content: aiReply });
+
+                    // Memory limit (sirf pichli 10 baatein save rakhega taaki server crash na ho)
+                    if (sessions[from].length > 10) sessions[from].shift();
+                    
+                    await chat.clearState();
+                }, randomDelay);
+            }
+
+        } catch (err) {
+            console.log("❌ Error:", err.message);
+        }
+    }
+});
+
+client.initialize();
