@@ -21,9 +21,14 @@ const client = new Client({
     }
 });
 
+// Pehle check kar lo ki upar 'const qrcode = require('qrcode-terminal');' hata kar 
+// hum direct image format use karenge. Is naye wale code ko replace kar do:
+
 client.on('qr', (qr) => {
-    console.log('QR Code scan karein:');
-    qrcode.generate(qr, { small: true });
+    console.log('--- NAYA QR CODE GENERATE HUA HAI ---');
+    // Hum text ke bajay ek link generate kar rahe hain jise aap direct click karke scan kar sako
+    console.log(`QR Link: https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`);
+    console.log('------------------------------------');
 });
 
 client.on('ready', () => {
