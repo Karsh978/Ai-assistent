@@ -1,132 +1,104 @@
 require('dotenv').config();
-const express = require('express');
-const axios = require('axios');
-const { Groq } = require('groq-sdk');
-
-const app = express();
-app.use(express.json());
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
+const Groq = require("groq-sdk");
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const sessions = {}; // Chat history maintain rakhne ke liye
+const sessions = {};
 
-const PORT = process.env.PORT || 3000;
-const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-
-// Delay function human typing effect ke liye
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// 1. Webhook Verification (Meta integration ke liye)
-app.get('/webhook', (req, res) => {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
-
-    if (mode && token) {
-        if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-            console.log('--- Webhook Verified Successfully! ---');
-            return res.status(200).send(challenge);
-        } else {
-            return res.sendStatus(403);
-        }
+const client = new Client({
+    authStrategy: new LocalAuth(),
+    puppeteer: {
+        headless: true,
+        args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--no-zygote'
+        ]
     }
 });
 
-// 2. Incoming Messages Handle Karein
-app.post('/webhook', async (req, res) => {
-    res.sendStatus(200); // Meta ko turant response de dete hain
+client.on('qr', (qr) => {
+    console.log('QR Code scan karein:');
+    qrcode.generate(qr, { small: true });
+});
 
-    try {
-        const entry = req.body.entry?.[0];
-        const changes = entry?.changes?.[0];
-        const value = changes?.value;
-        const message = value?.messages?.[0];
+client.on('ready', () => {
+    console.log('🚀 Jivan AI Bot Active Hai!');
+});
 
-        // Agar koi text message nahi hai toh ignore karein
-        if (!message || message.type !== 'text') return;
+client.on('message_create', async (msg) => {
+    if (msg.fromMe && !msg.body.startsWith('!test')) return;
+    if (msg.from.endsWith('@g.us')) return;
 
-        const from = message.from; // Sender ka WhatsApp number
-        const msgText = message.text.body; // User ka asli text
+    if (msg.from.includes('@c.us') || msg.from.includes('@lid')) {
+        const from = msg.from;
+        const msgText = msg.body;
+
+        if (!msgText || msgText.length < 1) return;
 
         console.log(`\n📩 Received: ${msgText} from ${from}`);
 
-        if (!sessions[from]) sessions[from] = [];
-        
-        // User ka message memory me push karein
-        sessions[from].push({ role: "user", content: msgText });
+        try {
+            if (!sessions[from]) sessions[from] = [];
+            sessions[from].push({ role: "user", content: msgText });
 
-        // Aapki exact custom system prompt personality
-        const systemInstruction = {
-            role: "system",
-            content: `
-            Identity: Tum Jivan ke 'Personal AI Proxy' ho. 
-            Personality: Ek dum real insaan ki tarah behave karo jo WhatsApp handle kar raha hai.
-            
-            Instructions:
-            1. Language: Natural Hindi + english (texting style). No robotic words. 
-               chatgpt,gemini other ai jaise user se baa krte h smane wale ke reply ka wise tum v kiya kro always help 
-            2. Memory: Samne wale ne pehle kya kaha hai, uska dhyan rakh kar reply do. 
-            3. Reply Style: Ek dum chhote aur to-the-point replies (Jaise: 'nahi bhai kal off hai', 'haan pta hai', 'puch ke btata hu'). 
-            4. Human Touch: Jarurat pede toh 'pata nahi', 'dekhna padega', ya 'shyd' jaise words use karo.
-            5. Agar koi school ki baat kare jaise "school ja raha hai?", toh aise jawab do jaise tum Jivan ke schedule ko jante ho (e.g., "abhi toh nahi yaar, thoda kaam hai usey").
-            6. samane wala person kya bol rha h usko flow ko smjho ki o kya bol rha h and unki baat ke according tum usko reply kro 
-            7. gaali ni dena ek acchse people ki trh baat kro samne walo ko smjho wise bat kro
-            8. agr need ho to emoji bhi use kiya kro.
-            9. agr koi ladki baat kr rhi h to unko unko uske accorrding baat kro ladki baat kr rhi ho to unko bhai bolna mt bolna and usko respectful baat krna .
-            `
-        };
+            const chat = await msg.getChat();
+            await chat.sendStateTyping();
 
-        // Sirf pichli 12 lines context ke liye slice karein
-        const recentHistory = sessions[from].slice(-12);
+            const systemInstruction = {
+                role: "system",
+                content: `
+                Identity: Tum Jivan ke 'Personal AI Proxy' ho. 
+                Personality: Ek dum real insaan ki tarah behave karo jo WhatsApp handle kar raha hai.
+                
+                Instructions:
+                1. Language: Natural Hindi + English (texting style). No robotic words. Normal dosto jaise baat karo.
+                2. Memory: Samne wale ne pehle kya kaha hai, uska dhyan rakh kar reply do. 
+                3. Reply Style: Ek dum chhote aur to-the-point replies (Jaise: 'nahi bhai kal off hai', 'haan pta hai', 'puch ke btata hu'). 
+                4. Human Touch: Jarurat pede toh 'pata nahi', 'dekhna padega', ya 'shyd' jaise words use karo.
+                5. Agar koi school ki baat kare jaise "school ja raha hai?", toh aise jawab do jaise tum Jivan ke schedule ko jante ho (e.g., "abhi toh nahi yaar, thoda kaam hai usey").
+                6. samane wala person kya bol rha h usko flow ko smjho ki o kya bol rha h and unki baat ke according tum usko reply kro 
+                7. gaali ni dena ek acchse people ki trh baat kro samne walo ko smjho wise bat kro
+                8. agr need ho to emoji bhi use kiya kro.
+                9. agr koi ladki baat kr rhi h to unko unko uske accorrding baat kro ladki baat kr rhi ho to unko bhai bolna mt bolna and usko respectful baat krna .
+                `
+            };
 
-        // Groq AI Request
-        const response = await groq.chat.completions.create({
-            messages: [systemInstruction, ...recentHistory],
-            model: "llama-3.3-70b-versatile", 
-            temperature: 0.8, 
-        });
-        
-        const aiReply = response.choices[0]?.message?.content;
+            const recentHistory = sessions[from].slice(-12);
 
-        if (aiReply) {
-            // 🔥 Insaani Touch: 3 se 6 second ka random waiting delay
-            const randomDelay = Math.floor(Math.random() * 3000) + 3000;
-            await delay(randomDelay);
-
-            // WhatsApp Business Cloud API ke through message send karna
-            await axios({
-                method: 'POST',
-                url: `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
-                headers: {
-                    'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
-                    'Content-Type': 'application/json'
-                },
-                data: {
-                    messaging_product: 'whatsapp',
-                    to: from,
-                    type: 'text',
-                    text: { body: aiReply }
-                }
+            const response = await groq.chat.completions.create({
+                messages: [systemInstruction, ...recentHistory],
+                model: "llama-3.3-70b-versatile", 
+                temperature: 0.8, 
             });
-
-            console.log(`💡 AI Reply sent: ${aiReply}`);
             
-            // Assistant ka message memory me push karein
-            sessions[from].push({ role: "assistant", content: aiReply });
+            const aiReply = response.choices[0]?.message?.content;
 
-            // Safe memory clean-up
-            if (sessions[from].length > 20) {
-                sessions[from].shift();
-                sessions[from].shift();
+            if (aiReply) {
+                const randomDelay = Math.floor(Math.random() * 3000) + 3000;
+                await delay(randomDelay);
+
+                await client.sendMessage(from, aiReply);
+                console.log(`💡 AI Reply sent: ${aiReply}`);
+                
+                sessions[from].push({ role: "assistant", content: aiReply });
+
+                if (sessions[from].length > 20) {
+                    sessions[from].shift();
+                    sessions[from].shift();
+                }
+                
+                await chat.clearState();
             }
-        }
 
-    } catch (error) {
-        console.error('❌ Error details:', error.response?.data || error.message);
+        } catch (err) {
+            console.log("❌ Error:", err.message);
+        }
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`🚀 Jivan's Friendly AI Bot running on port ${PORT}`);
-});
+client.initialize();
